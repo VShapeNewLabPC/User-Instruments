@@ -243,6 +243,38 @@ class Raw(DataTreatment):
         self.data = np.append(self.data, data)
         queue_treatment.put(self.data)
 
+class AverageTest(DataTreatment):
+    """
+        Class performing the average of the acquired data.
+    """
+
+    def __init__(self):
+
+        self.mean = 0.
+        self.std  = 0.
+
+    def process(self, data, queue_treatment, parameters):
+        """
+            Calculate the average of the current buffer and average it with
+            the previous measured data.
+            Return the data in the memory buffer as the following:
+            (data, std)
+        """
+
+        # We obtain the data in volt
+        data = self.data_in_volt(data)
+
+        # We obtain the current averaging for both and save them for
+        # the next iteration
+
+        # self.mean = self.mean_averaging(self.mean, data)
+        # self.std  = self.std_averaging(self.std, data)
+        # self.mean = self.mean_averaging(self.mean, np.mean(data, axis=0))
+        # self.std  = self.std_averaging(self.std, np.std(data, axis=0))
+
+        # print 'data', np.shape(data)
+        # Send the result with the amplitude in V
+        queue_treatment.put(data)
 
 class Average(DataTreatment):
     """
@@ -276,7 +308,6 @@ class Average(DataTreatment):
         # print 'data', np.shape(data)
         # Send the result with the amplitude in V
         queue_treatment.put((self.mean, self.std))
-
 
 class Average_time(DataTreatment):
     """
@@ -1459,7 +1490,6 @@ class HomodyneRealImag_rawWeighted(DataTreatment):
 
         queue_treatment.put((self.data_pulse_raw, self.data_nopulse_raw))
 
-
 class HomodyneRealImag_raw_sevROWeighted(DataTreatment):
     """
         Return the raw real and imaginary parts (ie not averaged over N) of the acquired oscillations by
@@ -1506,6 +1536,8 @@ class HomodyneRealImag_raw_sevROWeighted(DataTreatment):
 
         self.nb_points_stop = self.nb_points_end2 + int(delta_t*samplerate)
 
+        self.alpha2 = np.sqrt(np.mean(self.ideal_pulse2**2))
+        self.alpha1 = np.sqrt(np.mean(self.ideal_pulse1**2))
         # Data save
         self.data_pulse_raw1 = []
         self.data_pulse_raw2 = []
@@ -1527,16 +1559,75 @@ class HomodyneRealImag_raw_sevROWeighted(DataTreatment):
         # self.data_pulse_raw1 = np.mean(data[:,self.nb_points_start1:self.nb_points_end1], axis=1)
 
         self.data_pulse_raw1 = np.mean(self.ideal_pulse1[None,self.nb_points_start1:self.nb_points_end1]\
-                    *data[:,self.nb_points_start1:self.nb_points_end1], axis=1)#\
-                    # /np.mean(self.ideal_pulse1)
+                    *data[:,self.nb_points_start1:self.nb_points_end1], axis=1)/self.alpha1
+        #             # /np.mean(self.ideal_pulse1)
+        # self.data_pulse_raw1 = np.mean(self.ideal_pulse1[None,:]\
+        #             *data[:,:], axis=1)\
+        #             /np.sqrt(np.mean(self.ideal_pulse1**2))
 
         self.data_pulse_raw2 =  np.mean(self.ideal_pulse2[None,self.nb_points_start2:self.nb_points_end2]\
-                    *data[:,self.nb_points_start2:self.nb_points_end2], axis=1)#\
-                    # /np.mean(self.ideal_pulse2)
-        # np.mean(data[:,self.nb_points_start2:self.nb_points_end2], axis=1)
+                    *data[:,self.nb_points_start2:self.nb_points_end2], axis=1)/self.alpha2#\
+        #             # /np.mean(self.ideal_pulse2)
+
+        # self.data_pulse_raw2 =  np.mean(self.ideal_pulse2[None,:]\
+        #             *data[:,:], axis=1)\
+        #             /alpha2
 
         self.data_nopulse_raw = np.mean(data[:,self.nb_points_stop:], axis=1)
 
         # self.data_pulse_raw1 -= self.data_nopulse_raw
         # self.data_pulse_raw2 -= self.data_nopulse_raw
         queue_treatment.put((self.data_pulse_raw1, self.data_pulse_raw2, self.data_nopulse_raw))
+
+class HomodyneRealImag_raw_sevROBestWeighted(DataTreatment):
+    """
+        Return the raw real and imaginary parts (ie not averaged over N) of the acquired oscillations by
+        using the cos, sin method.
+    """
+
+    def __init__(self, acquisition_time, pulse_time1, t1_start, pulse_time2,
+                                t2_start, samplerate, weightfunc):
+        """
+            Input:
+                - pulse_time (float): in second
+                - samplerate (float): in sample per second
+
+        """
+
+        self.nb_points_tot = int(samplerate*acquisition_time)
+        self.time = np.arange(self.nb_points_tot)/samplerate
+        self.ideal_pulse1 = np.zeros_like(self.time)
+        self.ideal_pulse2 = np.zeros_like(self.time)
+
+        self.nb_points_start1 = int(t1_start*samplerate)
+        self.nb_points_start2 = int(t2_start*samplerate)
+        self.nb_points_weight = int(len(weightfunc))
+        alpha = np.sqrt(np.mean(weightfunc**2))
+
+        print self.nb_points_start1, self.nb_points_start2
+        for i in np.arange(len(weightfunc)):
+            self.ideal_pulse1[i+self.nb_points_start1] = weightfunc[i]/alpha
+            self.ideal_pulse2[i+self.nb_points_start2] = weightfunc[i]/alpha
+
+        # Data save
+        self.data_pulse_raw1 = []
+        self.data_pulse_raw2 = []
+        # self.data_nopulse_raw = []
+
+    def process(self, data, queue_treatment, parameters):
+        """
+            Return the raw real and imaginary parts (ie not averaged) of the acquired oscillations by
+            using the cos, sin method.
+            Real and imaginary parts will be array of length=averaging
+        """
+        # print 'test',self.nb_points_start1, self.nb_points_start2
+        # Data in volt
+        data = self.data_in_volt(data)
+
+        self.data_pulse_raw1 = np.mean(self.ideal_pulse1[None,+self.nb_points_start1:self.nb_points_weight+self.nb_points_start1]\
+                    *data[:,+self.nb_points_start1:self.nb_points_weight+self.nb_points_start1], axis=1)
+
+        self.data_pulse_raw2 =  np.mean(self.ideal_pulse2[None,+self.nb_points_start2:self.nb_points_weight+self.nb_points_start2]\
+                    *data[:,+self.nb_points_start2:self.nb_points_weight+self.nb_points_start2], axis=1)
+
+        queue_treatment.put((self.data_pulse_raw1, self.data_pulse_raw2))
